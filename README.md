@@ -33,7 +33,7 @@
   
 - Approach to overcome the problem:
 
-  - Ran Linear Regression, SVM, Neural Networks but overfitting was still the problem.
+  - Ran Linear Regression, SVM, Neural Networks and XGBoost but overfitting was still the problem.
   - Parameter tuning the Random Forest made it's way to getting better RMSE values in the prediction.
   - Tried using PCA in order to reduce the dimension of the dataset but were unable to get good results, ended up using all the columns and the model performed well
 
