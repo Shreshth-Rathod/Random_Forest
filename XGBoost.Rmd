@@ -1,0 +1,304 @@
+---
+title: "XGBoostProject"
+author: "Shreshth Rathod"
+date: "4/17/2021"
+output: html_document
+---
+
+## Loading the required packages
+```{r}
+require(tidyverse)
+require(tidymodels)
+require(parsnip)
+require(ranger)
+require(usemodels)
+require(keras)
+require(xgboost)
+require(doParallel)
+```
+
+
+## Importing the data from kaggle as train and test dataset
+```{r}
+rest_rev=read.csv('/Users/shreshthrathod/Downloads/restaurant-revenue-prediction-2/train.csv')
+rest_revTest = read.csv('/Users/shreshthrathod/Downloads/test.csv')
+```
+
+
+# Analyzing the data
+```{r}
+# Training data
+sumType = rest_rev %>% group_by(Type) %>% summarise(summation = n())
+ggplot(sumType, aes(x = Type, y = summation)) + geom_bar(stat="identity")
+
+
+# Test data
+sumType = rest_revTest %>% group_by(Type) %>% summarise(summation = n())
+ggplot(sumType, aes(x = Type, y = summation)) + geom_bar(stat="identity")
+
+rm(sumType)
+
+# For training data there are only three categories but in the testing data there are four categories ('MB' is the extra categorical variable) which should not be the case as the predictors can't predict on a new unknown category. Hence, we should impute it to 'DT' as 'MB' is more related to drive thru than 'FC' or 'IL'.
+
+
+
+
+
+
+
+
+
+# Training data
+sum_CityGroup = rest_rev %>% group_by(City.Group) %>% summarise(summation = n())
+ggplot(sum_CityGroup, aes(x = City.Group, y = summation)) + geom_bar(stat="identity")
+
+
+# Test data
+sum_CityGroup = rest_revTest %>% group_by(City.Group) %>% summarise(summation = n())
+ggplot(sum_CityGroup, aes(x = City.Group, y = summation)) + geom_bar(stat="identity")
+
+rm(sum_CityGroup)
+
+# There's not much of a difference in the training and test set so no changes are required for this column
+
+
+
+
+
+
+
+
+
+# Training data
+sum_City = rest_rev %>% group_by(City) %>% summarise(summation = n())
+ggplot(sum_City, aes(x = City, y = summation)) + geom_bar(stat="identity")
+# sum_City %>% View()
+
+# Test data
+sum_City = rest_revTest %>% group_by(City) %>% summarise(summation = n())
+ggplot(sum_City, aes(x = City, y = summation)) + geom_bar(stat="identity")
+# sum_City %>% View()
+rm(sum_City)
+
+# In training data set, number of cities are less than the testing set and it won't do any good if we predict on new cities so it is better to drop the city column as we have the geo-location information in the P variables.
+
+
+
+
+
+
+
+
+
+ggplot(rest_rev, aes(x= revenue)) + geom_boxplot()
+
+# There are outliers which can affect the overall results during the model building
+```
+
+
+## Preprocessing the training(and validation) and testing data
+```{r}
+# Removing the outliers in order to get unbiased and better results 
+
+rest_rev = rest_rev %>% filter(revenue < 10000000)
+
+
+# rest_rev$revenue <- log(1 + rest_rev$revenue)
+
+
+
+
+
+# Removing the city column from both the datasets as mentioned above
+
+# For training(and validation) data
+rest_rev = rest_rev %>% select(-City)
+
+# For testing data
+rest_revTest = rest_revTest %>% select(-City)
+
+
+
+
+
+
+
+
+
+# Whether it is a 'DT' or 'MB' type restaurant, it can be assumed as an Inline restaurant as they all are one and the same and imputing them to a majority category would a good option for better understanding as well as would have a proportionate data distribution
+
+# For training(and validation) data
+rest_rev$Type[rest_rev$Type == 'DT'] = 'IL'
+
+# For testing data
+rest_revTest$Type[rest_revTest$Type == 'DT' | rest_revTest$Type == 'MB'] = 'IL'
+
+
+
+
+
+
+
+
+
+# Here we have tried to find the number of days the restaurant has been open. For reference, we took a sample data for comparison and also downscale the final values to the factor of 1000 else it would have generated a biased model
+
+# For training(and validation) data
+rest_rev$Open.Date = as.Date(rest_rev$Open.Date, format = "%m/%d/%Y") 
+max(rest_rev$Open.Date)
+rest_rev$days_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_rev$Open.Date)/1000
+# rest_rev$months_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_rev$Open.Date)/3000
+# rest_rev$years_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_rev$Open.Date)/3650
+
+# For testing data
+rest_revTest$Open.Date = as.Date(rest_revTest$Open.Date, format = "%m/%d/%Y") 
+max(rest_revTest$Open.Date)
+rest_revTest$days_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_revTest$Open.Date)/1000
+# rest_revTest$months_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_revTest$Open.Date)/3000
+# rest_revTest$years_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_revTest$Open.Date)/3650
+
+
+
+
+
+
+
+
+
+# Splitting the date into year, month and day and dropping the Open.Date column from both the datasets
+
+# For training(and validation) data
+# rest_rev = rest_rev %>% mutate(year = as.numeric(format(Open.Date, format = "%Y")),
+#                                month = as.numeric(format(Open.Date, format = "%m")),
+#                                day = as.numeric(format(Open.Date, format = "%d")))
+
+rest_rev = rest_rev %>% select(-Open.Date)
+
+# For testing data
+# rest_revTest = rest_revTest %>% mutate(year = as.numeric(format(Open.Date, format = "%Y")),
+#                              month = as.numeric(format(Open.Date, format = "%m")),
+#                              day = as.numeric(format(Open.Date, format = "%d")))
+
+rest_revTest = rest_revTest %>% select(-Open.Date)
+
+
+
+
+
+
+
+
+
+# For training(and validation) data
+rest_rev = rest_rev %>% select(-Id) # This column has no significance in the dataset
+rest_rev$City.Group = as.factor(rest_rev$City.Group) # Convert the columns to factors
+rest_rev$Type = as.factor(rest_rev$Type) # Convert the columns to factors
+
+# For testing data
+ID = rest_revTest %>% select(Id)
+rest_revTest = rest_revTest %>% select(-Id) # This column has no significance in the dataset
+rest_revTest$City.Group = as.factor(rest_revTest$City.Group) # Convert the columns to factors
+rest_revTest$Type = as.factor(rest_revTest$Type) # Convert the columns to factors
+
+```
+
+
+```{r}
+set.seed(271)
+rest_rev_split<-initial_split(rest_rev, prop=.8, strata = revenue)
+rest_rev_split_training<-rest_rev_split%>% training()
+rest_rev_split_test<-rest_rev_split%>% testing()
+```
+
+
+```{r}
+rest_rev_split_recipe<- recipe(revenue ~ ., data= rest_rev_split_training)%>%
+                    step_rm(Type, City.Group)%>%
+                    step_dummy(all_nominal()) 
+```
+
+
+```{r}
+rest_rev_split_recipe%>%prep()%>%bake(rest_rev_split_training)
+rest_rev_split_recipe%>%prep()%>%bake(rest_rev_split_test)
+```
+
+
+```{r}
+xgb_spec = boost_tree(trees = 1000,
+                      tree_depth = tune(),
+                      min_n = tune(),
+                      loss_reduction = tune(),
+                      sample_size = tune(),
+                      mtry = tune(),
+                      learn_rate = tune()) %>%
+            set_engine("xgboost") %>%
+            set_mode("regression")
+
+xgb_grid = grid_latin_hypercube(tree_depth(),
+                                min_n(),
+                                loss_reduction(),
+                                sample_size = sample_prop(),
+                                finalize(mtry(), rest_rev_split_training),
+                                learn_rate(),
+                                size = 100)
+
+xgb_workflow<-workflow() %>% add_recipe(rest_rev_split_recipe) %>%
+                             add_model(xgb_spec)
+```
+
+
+```{r}
+set.seed(1234)
+vb_folds = vfold_cv(rest_rev_split_training, strata = revenue)
+vb_folds
+```
+
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(1234)
+xgb_res = tune_grid(xgb_workflow,
+                    resamples = vb_folds,
+                    grid = xgb_grid,
+                    control = control_grid(save_pred = T))
+```
+
+
+```{r}
+xgb_res %>% collect_metrics() %>% View()
+```
+
+
+```{r}
+show_best(xgb_res, "rsq") %>% View()
+best_rsq = select_best(xgb_res, "rsq") %>% View()
+
+show_best(xgb_res, "rmse") %>% View()
+best_rmse = select_best(xgb_res, "rmse")
+
+final_xgb = finalize_workflow(xgb_workflow, best_rmse)
+```
+
+
+```{r}
+final_res = last_fit(final_xgb, rest_rev_split) #fit on training data and metric has been evaluated on test set
+final_res %>% collect_metrics()
+```
+
+
+```{r}
+final_res %>% collect_predictions()
+```
+
+
+```{r}
+# https://community.rstudio.com/t/tidymodels-error-when-predicting-on-new-data-with-xgboost-model/73319/2
+final_xgb = finalize_workflow(xgb_workflow, best_rmse) %>% fit(rest_rev_split_training)
+predict(final_xgb, rest_revTest) %>% View()
+```
+
+```{r}
+```
+
