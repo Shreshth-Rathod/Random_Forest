@@ -43,12 +43,13 @@
   - Tidymodels and Tidyverse were the main packages used for building and tuning the model.
   
 # Conclusion
-Write a comprehensive conclusion.
 - Project turned out really well with tuned Random Forest.
 - Major things learnt in the project are:
   - Parameter Tuning.
   - How to deal with unknown columns and how to apply & interpret Principal Component Analysis.
   - How to visualise data and wrangle it according the requirements.
+
+- Secured 461 Rank out of ~2260 teams in the private leaderboard.
 
 # Follow Me On
 http://linkedin.com/in/shreshthrathod
