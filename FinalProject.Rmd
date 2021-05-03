@@ -1,0 +1,311 @@
+---
+title: "RandomForest"
+author: "Shreshth Rathod 
+date: "4/18/2021"
+output: html_document
+---
+## Loading the required packages
+```{r}
+require(tidyverse)
+require(tidymodels)
+require(parsnip)
+require(ranger)
+require(usemodels)
+require(doParallel)
+```
+
+
+## Importing the data from kaggle as train and test dataset
+```{r}
+rest_rev=read.csv('/Users/shreshthrathod/Downloads/restaurant-revenue-prediction-2/train.csv')
+rest_revTest = read.csv('/Users/shreshthrathod/Downloads/test.csv')
+```
+
+
+# Analyzing the data
+```{r}
+# Training data
+sumType = rest_rev %>% group_by(Type) %>% summarise(summation = n())
+ggplot(sumType, aes(x = Type, y = summation)) + geom_bar(stat="identity")
+
+
+# Test data
+sumType = rest_revTest %>% group_by(Type) %>% summarise(summation = n())
+ggplot(sumType, aes(x = Type, y = summation)) + geom_bar(stat="identity")
+
+rm(sumType)
+
+# For training data there are only three categories but in the testing data there are four categories ('MB' is the extra categorical variable) which should not be the case as the predictors can't predict on a new unknown category. Hence, we should impute it to 'DT' as 'MB' is more related to drive thru than 'FC' or 'IL'.
+
+
+
+
+
+
+
+
+
+# Training data
+sum_CityGroup = rest_rev %>% group_by(City.Group) %>% summarise(summation = n())
+ggplot(sum_CityGroup, aes(x = City.Group, y = summation)) + geom_bar(stat="identity")
+
+
+# Test data
+sum_CityGroup = rest_revTest %>% group_by(City.Group) %>% summarise(summation = n())
+ggplot(sum_CityGroup, aes(x = City.Group, y = summation)) + geom_bar(stat="identity")
+
+rm(sum_CityGroup)
+
+# There's not much of a difference in the training and test set so no changes are required for this column
+
+
+
+
+
+
+
+
+
+# Training data
+sum_City = rest_rev %>% group_by(City) %>% summarise(summation = n())
+ggplot(sum_City, aes(x = City, y = summation)) + geom_bar(stat="identity")
+# sum_City %>% View()
+
+# Test data
+sum_City = rest_revTest %>% group_by(City) %>% summarise(summation = n())
+ggplot(sum_City, aes(x = City, y = summation)) + geom_bar(stat="identity")
+# sum_City %>% View()
+rm(sum_City)
+
+# In training data set, number of cities are less than the testing set and it won't do any good if we predict on new cities so it is better to drop the city column as we have the geo-location information in the P variables.
+
+
+
+
+
+
+
+
+
+ggplot(rest_rev, aes(x= revenue)) + geom_boxplot()
+
+# There are outliers which can affect the overall results during the model building
+```
+
+
+## Preprocessing the training(and validation) and testing data
+```{r}
+# Removing the outliers in order to get unbiased and better results 
+
+rest_rev = rest_rev %>% filter(revenue < 10000000)
+
+
+
+
+
+# Removing the city column from both the datasets as mentioned above
+
+# For training(and validation) data
+rest_rev = rest_rev %>% select(-City)
+
+# For testing data
+rest_revTest = rest_revTest %>% select(-City)
+
+
+
+
+
+
+
+
+
+# Whether it is a 'DT' or 'MB' type restaurant, it can be assumed as an Inline restaurant as they all are one and the same and imputing them to a majority category would a good option for better understanding as well as would have a proportionate data distribution
+
+# For training(and validation) data
+rest_rev$Type[rest_rev$Type == 'DT'] = 'IL'
+
+# For testing data
+rest_revTest$Type[rest_revTest$Type == 'DT' | rest_revTest$Type == 'MB'] = 'IL'
+
+
+
+
+
+
+
+
+
+# Here we have tried to find the number of days the restaurant has been open. For reference, we took a sample data for comparison and also downscale the final values to the factor of 1000 else it would have generated a biased model
+
+# For training(and validation) data
+rest_rev$Open.Date = as.Date(rest_rev$Open.Date, format = "%m/%d/%Y") 
+max(rest_rev$Open.Date)
+rest_rev$days_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_rev$Open.Date)/1000
+
+# For testing data
+rest_revTest$Open.Date = as.Date(rest_revTest$Open.Date, format = "%m/%d/%Y") 
+max(rest_revTest$Open.Date)
+rest_revTest$days_SinceOpened <- as.numeric(as.Date("2014-02-12")-rest_revTest$Open.Date)/1000
+
+
+
+
+
+
+
+
+
+# Splitting the date into year, month and day and dropping the Open.Date column from both the datasets
+
+# For training(and validation) data
+# rest_rev = rest_rev %>% mutate(year = as.numeric(format(Open.Date, format = "%Y")),
+#                                month = as.numeric(format(Open.Date, format = "%m")),
+#                                day = as.numeric(format(Open.Date, format = "%d")))
+
+rest_rev = rest_rev %>% select(-Open.Date)
+
+# For testing data
+# rest_revTest = rest_revTest %>% mutate(year = as.numeric(format(Open.Date, format = "%Y")),
+#                              month = as.numeric(format(Open.Date, format = "%m")),
+#                              day = as.numeric(format(Open.Date, format = "%d")))
+
+rest_revTest = rest_revTest %>% select(-Open.Date)
+
+
+
+
+
+
+
+
+
+# For training(and validation) data
+rest_rev = rest_rev %>% select(-Id) # This column has no significance in the dataset
+rest_rev$City.Group = as.factor(rest_rev$City.Group) # Convert the columns to factors
+rest_rev$Type = as.factor(rest_rev$Type) # Convert the columns to factors
+
+# For testing data
+ID = rest_revTest %>% select(Id)
+rest_revTest = rest_revTest %>% select(-Id) # This column has no significance in the dataset
+rest_revTest$City.Group = as.factor(rest_revTest$City.Group) # Convert the columns to factors
+rest_revTest$Type = as.factor(rest_revTest$Type) # Convert the columns to factors
+
+```
+
+
+# Splitting the training data into training and validation set
+```{r}
+set.seed(271)
+rest_rev_split<-initial_split(rest_rev, prop=.8, strata = revenue)
+rest_rev_train<-rest_rev_split%>% training()
+rest_rev_test<-rest_rev_split%>% testing()
+
+set.seed(1234)
+#revenue_folds = bootstraps(rest_rev_train, strata = revenue) # resampling of data as the data is too small for training
+revenue_folds = vfold_cv(rest_rev_train, strata = revenue)
+```
+
+
+```{r}
+ranger_recipe <- recipe(formula = revenue ~ ., data = rest_rev_train) %>%
+                  step_rm(City.Group, Type) %>%
+                  step_dummy(all_nominal())
+
+ranger_spec <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 4) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger") 
+
+ranger_workflow <- 
+  workflow() %>% 
+  add_recipe(ranger_recipe) %>% 
+  add_model(ranger_spec) 
+
+set.seed(77183)
+
+doParallel::registerDoParallel()
+
+ranger_tune <-
+  tune_grid(ranger_workflow, resamples = revenue_folds, grid = 14)
+```
+
+
+```{r}
+show_best(ranger_tune, metric = "rmse")
+#show_best(ranger_tune, metric = "rsq")
+```
+
+
+```{r}
+final_rf <- ranger_workflow %>%
+  finalize_workflow(select_best(ranger_tune, "rmse"))
+
+final_rf
+```
+
+
+```{r}
+Final_fit <- last_fit(final_rf, rest_rev_split)
+Final_fit
+```
+
+
+```{r}
+collect_metrics(Final_fit)
+```
+
+
+```{r}
+collect_predictions(Final_fit) %>%
+  ggplot(aes(revenue, .pred)) +
+  geom_abline(lty = 2, color = "gray50") +
+  geom_point(alpha = 0.5, color = "midnightblue") +
+  coord_fixed()
+```
+
+
+```{r}
+library(vip)
+
+imp_spec <- ranger_spec %>%
+  finalize_model(select_best(ranger_tune, "rmse")) %>%
+  set_engine("ranger", importance = "permutation")
+
+workflow() %>%
+  add_recipe(ranger_recipe) %>%
+  add_model(imp_spec) %>%
+  fit(rest_rev_train) %>%
+  pull_workflow_fit() %>%
+  vip(aesthetics = list(alpha = 0.8, fill = "midnightblue"))
+```
+
+
+#Final Prediction
+```{r}
+
+Final_Prediction = workflow() %>% add_recipe(ranger_recipe) %>%
+                                  add_model(imp_spec) %>%
+                                  fit(rest_rev_train) %>%
+                                  predict(rest_revTest)
+
+Final_Prediction_File = cbind(ID, Final_Prediction)
+Final_Prediction_File = as.data.frame(Final_Prediction_File)
+Final_Prediction_File = Final_Prediction_File %>% rename(Prediction = .pred)
+
+write.csv(Final_Prediction_File,"/Users/shreshthrathod/Downloads/final_prediction.csv", row.names = FALSE)
+
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
